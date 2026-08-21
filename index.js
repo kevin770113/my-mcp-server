@@ -2,6 +2,8 @@ import express from "express";
 import cors from "cors";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+// 【關鍵修正】載入最新版 SDK 要求的 Schema 定義檔
+import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 
 const app = express();
 app.use(cors());
@@ -24,7 +26,31 @@ app.post("/message", async (req, res) => {
   await transport.handlePostMessage(req, res);
 });
 
-server.setRequestHandler("tools/call", async (request) => {
+// 【關鍵修正 1】使用 ListToolsRequestSchema 註冊工具清單，讓 Gemini 知道有這個技能
+server.setRequestHandler(ListToolsRequestSchema, async () => {
+  return {
+    tools: [
+      {
+        name: "update_github_file",
+        description: "Update a file in a GitHub repository",
+        inputSchema: {
+          type: "object",
+          properties: {
+            owner: { type: "string" },
+            repo: { type: "string" },
+            path: { type: "string" },
+            newContent: { type: "string" },
+            commitMessage: { type: "string" }
+          },
+          required: ["owner", "repo", "path", "newContent"]
+        }
+      }
+    ]
+  };
+});
+
+// 【關鍵修正 2】使用 CallToolRequestSchema 取代舊的 "tools/call" 字串
+server.setRequestHandler(CallToolRequestSchema, async (request) => {
   if (request.params.name === "update_github_file") {
     const { owner, repo, path, newContent, commitMessage } = request.params.arguments;
     const githubToken = process.env.GITHUB_TOKEN;
@@ -42,6 +68,7 @@ server.setRequestHandler("tools/call", async (request) => {
     if (!putRes.ok) return { content: [{ type: "text", text: `Error: ${await putRes.text()}` }] };
     return { content: [{ type: "text", text: `Successfully updated ${path}` }] };
   }
+  throw new Error("Unknown tool");
 });
 
 app.listen(process.env.PORT || 3000, "0.0.0.0", () => console.log("MCP Server running"));
